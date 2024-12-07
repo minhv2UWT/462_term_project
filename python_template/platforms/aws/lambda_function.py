@@ -1,5 +1,7 @@
 import handler
 import json
+import boto3
+import pandas as pd
 
 #
 # AWS Lambda Functions Default Function
@@ -10,6 +12,21 @@ import json
 #
 # @param request
 #
+
+s3_client = boto3.client('s3')
 def lambda_handler(event, context):
-	return handler.yourFunction(event, context)
+	bucket = event['bucket']
+	key = event['key']
+	#downloading parquet file from s3
+	local_path = '/local/path'
+	s3_client.download_file(bucket, key, local_path)
+	#process
+	df = pd.read_parquet(local_file)
+	#result = df.describe().to_dict() #example of processing, not necessary
+
+	return {
+		'statusCode': 200,
+		'result': result
+	}
+	
 	
