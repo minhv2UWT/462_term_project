@@ -13,25 +13,44 @@ LAMBDA_FUNCTION_NAME = "your_lambda_function_name"
 def invoke_lambda():
     start_time = time.time()
     response = lambda_client.invoke(
-        FunctionName=LAMBDA_FUNCTION_NAME,
+        FunctionName=LAMBDA_FUNCTION_NAME, #replace
         InvocationType='RequestResponse'
-    )
+        Payload=json.dumps({
+            "bucket": bucket_name, #replace
+            "key": file_key #replace 
+    })
     end_time = time.time()
     duration = end_time - start_time
     return duration
-
+PARQUET_FILES = [
+    "fhvhv_tripdata_2021-01.parquet",
+    "fhvhv_tripdata_2021-02.parquet",
+    "fhvhv_tripdata_2021-03.parquet",
+    "fhvhv_tripdata_2021-04.parquet",
+    "fhvhv_tripdata_2021-05.parquet",
+    "fhvhv_tripdata_2021-06.parquet",
+    "fhvhv_tripdata_2021-07.parquet",
+    "fhvhv_tripdata_2021-08.parquet",
+    "fhvhv_tripdata_2021-09.parquet",
+    "fhvhv_tripdata_2021-10.parquet",
+    "fhvhv_tripdata_2021-11.parquet",
+    "fhvhv_tripdata_2021-12.parquet",
+]
+    
 # Function to test scalability with an increasing number of invocations
-def scalability_test(max_concurrency=100):
+def scalability_test(bucket_name, parquet_files, max_concurrency=100):
     results = []
     for concurrency in range(1, max_concurrency + 1):
         durations = []
         print(f"Testing with concurrency level: {concurrency}")
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
-            futures = [executor.submit(invoke_lambda) for _ in range(concurrency)]
-            for future in concurrent.futures.as_completed(futures):
-                durations.append(future.result())
-        avg_duration = sum(durations) / len(durations)
-        results.append((concurrency, avg_duration))
+            futures = [executor.submit(invoke_lambda, bucket_name, parquet_files[i % len(parquet_files)]
+            for i in range(concurrency)
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            durations.append(future.result())
+        avg_duration = sum(durations) / len(duration) #average runtime
+        results.append((concurrency, avg_duration)) #store concurrency level & avg duration 
         print(f"Average runtime for concurrency {concurrency}: {avg_duration:.2f} seconds")
     return results
 
