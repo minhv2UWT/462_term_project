@@ -2,8 +2,7 @@ import boto3
 import time
 import requests
 import json
-import concurrent.futures
-import pandas as pd
+import csv
 
 # Initialize AWS Lambda client
 lambda_client = boto3.client('lambda')
