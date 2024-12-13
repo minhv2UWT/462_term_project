@@ -15,7 +15,6 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.stream.Collectors;
 
 public class Transform implements RequestHandler<Request, HashMap<String, Object>> {
 
@@ -60,7 +59,7 @@ public class Transform implements RequestHandler<Request, HashMap<String, Object
             transformedData.append("\n");
 
             // Initialize parallel processing.
-            Set<String> seenPULocationIDs = ConcurrentHashMap.newKeySet();
+            Set<String> seenPrimaryKeys = ConcurrentHashMap.newKeySet();
             List<Double> numericValues = Collections.synchronizedList(new ArrayList<>());
             int rowCount = 0;
 
@@ -74,17 +73,17 @@ public class Transform implements RequestHandler<Request, HashMap<String, Object
 
                 tasks.add(() -> {
                     String[] columns = rowLine.split(",");
-                    String pulocationID = columns[7].trim();  // PULocationID is typically in column 7.
-                    
-                    // Filter duplicates based on PULocationID
-                    if (!seenPULocationIDs.contains(pulocationID)) {
-                        seenPULocationIDs.add(pulocationID);
+                    String primaryKey = columns[7].trim() + "_" + columns[8].trim();  // Combine columns[7] and columns[8].
+
+                    // Filter duplicates based on the composite primary key.
+                    if (!seenPrimaryKeys.contains(primaryKey)) {
+                        seenPrimaryKeys.add(primaryKey);
 
                         synchronized (transformedData) {
                             transformedData.append(String.join(",", Arrays.asList(columns))).append("\n");
                         }
 
-                        // Collect numeric values
+                        // Collect numeric values for aggregation (e.g., median calculation).
                         for (String column : columns) {
                             try {
                                 numericValues.add(Double.parseDouble(column.trim()));
