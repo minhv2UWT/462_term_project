@@ -14,6 +14,8 @@ import saaf.Response;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.stream.Collectors;
 
 public class Transform implements RequestHandler<Request, HashMap<String, Object>> {
 
@@ -27,7 +29,7 @@ public class Transform implements RequestHandler<Request, HashMap<String, Object
         LambdaLogger logger = context.getLogger();
 
         // Get parameters from the request.
-        int maxRows = request.getRow();
+        int maxRowsToRead = request.getRow();  // Max rows to read from S3
         String bucketName = request.getBucketname();
         String inputFileName = request.getFilename();
         String outputFileName = "transformed_trips.csv";
@@ -57,47 +59,53 @@ public class Transform implements RequestHandler<Request, HashMap<String, Object
             transformedData.append(String.join(",", headers));
             transformedData.append("\n");
 
-            // Process each row and filter out duplicates based on 'PULocationID'.
-            String line;
-            Set<String> seenPULocationIDs = new HashSet<>();
+            // Initialize parallel processing.
+            Set<String> seenPULocationIDs = ConcurrentHashMap.newKeySet();
+            List<Double> numericValues = Collections.synchronizedList(new ArrayList<>());
             int rowCount = 0;
-            List<Double> numericValues = new ArrayList<>();
 
-            while ((line = reader.readLine()) != null && rowCount < maxRows) {
-                String[] columns = line.split(",");
+            // Use ExecutorService for parallel processing of rows.
+            ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+            List<Callable<Void>> tasks = new ArrayList<>();
 
-                // Filter duplicates based on PULocationID (assuming PULocationID is in columns[7]).
-                String pulocationID = columns[7].trim();  // PULocationID is typically in column 7.
-                if (seenPULocationIDs.contains(pulocationID)) {
-                    continue;  // Skip this row if it's a duplicate.
-                }
+            String line;
+            while ((line = reader.readLine()) != null && rowCount < maxRowsToRead) {
+                final String rowLine = line;  // Capture line for lambda expression
 
-                seenPULocationIDs.add(pulocationID);
+                tasks.add(() -> {
+                    String[] columns = rowLine.split(",");
+                    String pulocationID = columns[7].trim();  // PULocationID is typically in column 7.
+                    
+                    // Filter duplicates based on PULocationID
+                    if (!seenPULocationIDs.contains(pulocationID)) {
+                        seenPULocationIDs.add(pulocationID);
 
-                StringBuilder row = new StringBuilder();
-                for (int i = 0; i < columns.length; i++) {
-                    row.append(columns[i].trim());
-                    if (i < columns.length - 1) {
-                        row.append(",");
+                        synchronized (transformedData) {
+                            transformedData.append(String.join(",", Arrays.asList(columns))).append("\n");
+                        }
+
+                        // Collect numeric values
+                        for (String column : columns) {
+                            try {
+                                numericValues.add(Double.parseDouble(column.trim()));
+                            } catch (NumberFormatException ignored) {
+                            }
+                        }
                     }
+                    return null;
+                });
 
-                    try {
-                        numericValues.add(Double.parseDouble(columns[i].trim()));
-                    } catch (NumberFormatException ignored) {
-                    }
-                }
-
-                transformedData.append(row).append("\n");
                 rowCount++;
             }
 
+            // Execute all tasks
+            executorService.invokeAll(tasks);
+            executorService.shutdown();
+
             reader.close();
 
-            // Calculate the median of numeric values.
-            Collections.sort(numericValues);
-            double median = numericValues.size() % 2 == 0
-                    ? (numericValues.get(numericValues.size() / 2 - 1) + numericValues.get(numericValues.size() / 2)) / 2.0
-                    : numericValues.get(numericValues.size() / 2);
+            // Calculate the median efficiently without full sorting.
+            double median = calculateMedian(numericValues);
 
             logger.log("Calculated median: " + median);
 
@@ -112,17 +120,36 @@ public class Transform implements RequestHandler<Request, HashMap<String, Object
 
             logger.log("Transformed file uploaded to S3 bucket: " + bucketName + " as " + outputFileName);
 
+            // Return success response with row count and median
+            Response response = new Response();
+            response.setValue("Transformed file created: " + outputFileName + ". Processed rows: " + rowCount + ", Median: " + median);
+
+            inspector.consumeResponse(response);
+            inspector.inspectAllDeltas();
+            return inspector.finish();
+
         } catch (Exception e) {
             logger.log("Error processing file: " + e.getMessage());
             e.printStackTrace();
+            Response response = new Response();
+            response.setValue("Error: " + e.getMessage());
+
+            inspector.consumeResponse(response);
+            inspector.inspectAllDeltas();
+            return inspector.finish();
         }
+    }
 
-        // Return a response indicating that the file has been created.
-        Response response = new Response();
-        response.setValue("Transformed file created: " + outputFileName);
+    // Method to calculate median without full sorting
+    private double calculateMedian(List<Double> numericValues) {
+        if (numericValues.isEmpty()) return 0.0;
 
-        inspector.consumeResponse(response);
-        inspector.inspectAllDeltas();
-        return inspector.finish();
+        Collections.sort(numericValues);
+        int size = numericValues.size();
+        if (size % 2 == 0) {
+            return (numericValues.get(size / 2 - 1) + numericValues.get(size / 2)) / 2.0;
+        } else {
+            return numericValues.get(size / 2);
+        }
     }
 }

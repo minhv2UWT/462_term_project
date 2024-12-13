@@ -38,26 +38,65 @@ public class Query implements RequestHandler<Request, HashMap<String, Object>> {
 
         LambdaLogger logger = context.getLogger();
 
-        // Ensure the database file is available locally
-        File dbFile = new File(LOCAL_DB_PATH);
-        if (!dbFile.exists()) {
-            // Database file does not exist locally, so we need to download it from S3
-            try {
-                AmazonS3 s3Client = AmazonS3ClientBuilder.standard().build();
-                S3Object s3Object = s3Client.getObject(new GetObjectRequest(bucketname, S3_DB_PATH));
-                InputStream objectData = s3Object.getObjectContent();
+        // Log the contents of /tmp directory before any actions
+        File tmpDir = new File("/tmp");
+        File[] files = tmpDir.listFiles();
 
-                // Save the S3 object to the local file system
-                Files.copy(objectData, Paths.get(LOCAL_DB_PATH));
-                logger.log("Downloaded database from S3: " + S3_DB_PATH);
-            } catch (Exception e) {
-                logger.log("Error downloading the database from S3: " + e.getMessage());
-                e.printStackTrace();
-                return null;
+        if (files != null && files.length > 0) {
+            for (File file : files) {
+                logger.log("File in /tmp: " + file.getName());
             }
+        } else {
+            logger.log("No files found in /tmp.");
         }
 
-        // Connect to the SQLite database
+        // Ensure the database file is available locally
+        File dbFile = new File(LOCAL_DB_PATH);
+        
+        // Log if the database exists before deletion
+        if (dbFile.exists()) {
+            logger.log("Old database exists, attempting to delete...");
+            boolean deleted = dbFile.delete();
+            if (deleted) {
+                logger.log("Deleted old local database file.");
+            } else {
+                logger.log("Failed to delete old local database file.");
+            }
+        } else {
+            logger.log("No old database file to delete.");
+        }
+
+        // Explicitly delete the file before downloading the new one
+        try {
+            if (Files.exists(Paths.get(LOCAL_DB_PATH))) {
+                Files.delete(Paths.get(LOCAL_DB_PATH));  // Delete the file explicitly
+                logger.log("Explicitly deleted the old database file.");
+            }
+        } catch (IOException e) {
+            logger.log("Error deleting the old database file: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        // Download the latest database from S3
+        try {
+            AmazonS3 s3Client = AmazonS3ClientBuilder.standard().build();
+            S3Object s3Object = s3Client.getObject(new GetObjectRequest(bucketname, S3_DB_PATH));
+            InputStream objectData = s3Object.getObjectContent();
+
+            // Save the S3 object to the local file system
+            Files.copy(objectData, Paths.get(LOCAL_DB_PATH));
+            logger.log("Downloaded database from S3: " + S3_DB_PATH);
+        } catch (Exception e) {
+            logger.log("Error downloading the database from S3: " + e.getMessage());
+            e.printStackTrace();
+            return null;
+        }
+
+        // Verify that the new database file exists
+        File newDbFile = new File(LOCAL_DB_PATH);
+        logger.log("New database file exists: " + newDbFile.exists());
+
+        // Connect to the SQLite database and query
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + LOCAL_DB_PATH)) {
             // Build the SQL query dynamically
             StringBuilder sql = new StringBuilder("SELECT ");
